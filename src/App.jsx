@@ -4,52 +4,10 @@ import { python } from '@codemirror/lang-python'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchStocks, fetchChart, fetchNews } from './services/api'
 import { runPythonPolicy, runPythonBacktest, loadPyodideEngine } from './services/python'
+import { POLICY_TEMPLATES, savePolicy, loadPolicies, deletePolicy, getShareUrl, loadCodeFromUrl } from './services/policies'
 import './App.css'
 
-const DEFAULT_CODE = `# Aivester Policy: Momentum Scanner
-# Evaluate stocks based on momentum and sentiment
-
-def evaluate(stock, news):
-    signals = []
-
-    # Price momentum
-    if stock.change_pct > 2:
-        signals.append("STRONG_UPTREND")
-    elif stock.change_pct > 0:
-        signals.append("UPTREND")
-    elif stock.change_pct < -2:
-        signals.append("STRONG_DOWNTREND")
-    else:
-        signals.append("DOWNTREND")
-
-    # Volume spike
-    if stock.volume > stock.avg_volume * 1.5:
-        signals.append("VOLUME_SPIKE")
-
-    # News sentiment
-    positive_words = ["beat", "surge", "growth", "record", "upgrade"]
-    negative_words = ["miss", "drop", "decline", "cut", "downgrade"]
-
-    for article in news:
-        lower = article.title.lower()
-        for w in positive_words:
-            if w in lower:
-                signals.append("POSITIVE_NEWS")
-                break
-        for w in negative_words:
-            if w in lower:
-                signals.append("NEGATIVE_NEWS")
-                break
-
-    return {
-        "symbol": stock.symbol,
-        "signals": signals,
-        "score": len([s for s in signals
-                      if "UP" in s or "POSITIVE" in s])
-              - len([s for s in signals
-                     if "DOWN" in s or "NEGATIVE" in s])
-    }
-`
+const DEFAULT_CODE = POLICY_TEMPLATES[0].code
 
 const TIME_PERIODS = ['1D', '1W', '1M', '3M', '1Y']
 const INTERVAL_OPTIONS = [
@@ -156,6 +114,9 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [pyodideReady, setPyodideReady] = useState(false)
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [showSaved, setShowSaved] = useState(false)
+  const [saveName, setSaveName] = useState('')
   const fileInputRef = useRef(null)
 
   useEffect(() => {
@@ -315,6 +276,14 @@ function App() {
     e.target.value = ''
   }, [])
 
+  useEffect(() => {
+    const urlCode = loadCodeFromUrl()
+    if (urlCode) {
+      setCode(urlCode)
+      setTerminal(prev => [...prev, { type: 'system', text: '$ Loaded policy from shared URL' }])
+    }
+  }, [])
+
   if (loading) {
     return (
       <div className="app">
@@ -345,6 +314,12 @@ function App() {
         <div className="editor-area">
           <div className="editor-header">
             <div className="editor-header-left">
+              <button className="upload-btn" onClick={() => setShowTemplates(!showTemplates)}>
+                TEMPLATES
+              </button>
+              <button className="upload-btn" onClick={() => setShowSaved(!showSaved)}>
+                SAVED
+              </button>
               <button className="upload-btn" onClick={() => fileInputRef.current?.click()}>
                 UPLOAD
               </button>
@@ -382,9 +357,63 @@ function App() {
               <button className="run-btn" onClick={handleRun} disabled={isRunning}>
                 {isRunning ? 'RUNNING...' : 'RUN'}
               </button>
+              <button className="save-btn" onClick={() => {
+                if (saveName.trim()) {
+                  savePolicy(saveName.trim(), code)
+                  setTerminal(prev => [...prev, { type: 'success', text: `$ Saved policy: ${saveName.trim()}` }])
+                  setSaveName('')
+                }
+              }}>SAVE</button>
+              <button className="share-btn" onClick={() => {
+                const url = getShareUrl(code)
+                navigator.clipboard.writeText(url).then(() => {
+                  setTerminal(prev => [...prev, { type: 'success', text: '$ Share URL copied to clipboard' }])
+                }).catch(() => {
+                  setTerminal(prev => [...prev, { type: 'info', text: `$ Share URL: ${url}` }])
+                })
+              }}>SHARE</button>
             </div>
           </div>
-          <div className="editor-body">
+          {showTemplates && (
+              <div className="template-panel">
+                <div className="template-list">
+                  {POLICY_TEMPLATES.map((t, i) => (
+                    <button key={i} className="template-item" onClick={() => { setCode(t.code); setShowTemplates(false); setTerminal(prev => [...prev, { type: 'system', text: `$ Loaded template: ${t.name}` }]) }}>
+                      <div className="template-name">{t.name}</div>
+                      <div className="template-desc">{t.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {showSaved && (() => {
+              const policies = loadPolicies()
+              const names = Object.keys(policies)
+              return (
+                <div className="template-panel">
+                  {names.length === 0 ? (
+                    <div className="template-desc">No saved policies yet. Click SAVE to save your current policy.</div>
+                  ) : (
+                    <div className="template-list">
+                      {names.map(name => (
+                        <div key={name} className="template-item saved-item">
+                          <div className="saved-row" onClick={() => { setCode(policies[name].code); setShowSaved(false); setTerminal(prev => [...prev, { type: 'system', text: `$ Loaded: ${name}` }]) }}>
+                            <div className="template-name">{name}</div>
+                          </div>
+                          <button className="delete-btn" onClick={() => { deletePolicy(name); setShowSaved(false); setTerminal(prev => [...prev, { type: 'system', text: `$ Deleted: ${name}` }]) }}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+            {saveName !== '' && (
+              <div style={{ display: 'flex', padding: '4px 8px', gap: '4px', background: 'var(--surface-alt)', borderTop: '1px solid var(--border)' }}>
+                <input className="save-input" value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Policy name..." onKeyDown={e => { if (e.key === 'Enter') { savePolicy(saveName, code); setTerminal(prev => [...prev, { type: 'success', text: `$ Saved: ${saveName}` }]); setSaveName('') } }} />
+              </div>
+            )}
+            <div className="editor-body">
             <CodeMirror
               value={code}
               height="100%"

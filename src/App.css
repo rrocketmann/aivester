@@ -195,6 +195,108 @@ html, body, #root {
   color: var(--green);
 }
 
+.save-btn, .share-btn {
+  padding: 5px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+}
+
+.save-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.share-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.template-panel {
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  transition: border-color 0.15s;
+}
+
+.template-item:hover {
+  border-color: var(--green);
+}
+
+.template-name {
+  font-weight: 600;
+}
+
+.template-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.saved-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.delete-btn:hover {
+  color: var(--red);
+}
+
+.saved-row {
+  flex: 1;
+  cursor: pointer;
+}
+
+.save-input {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  outline: none;
+}
+
+.save-input:focus {
+  border-color: var(--green);
+}
+
 .run-btn {
   padding: 5px 16px;
   background: var(--surface);
