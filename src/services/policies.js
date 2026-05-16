@@ -3,26 +3,35 @@ const POLICY_TEMPLATES = [
     name: 'Momentum Scanner',
     description: 'Buy on uptrends, sell on downtrends',
     code: `# Momentum Scanner
-# Buy when momentum is positive, sell when negative
+# Tune the thresholds below, then click TRAIN to optimize them
+
+UP_THRESHOLD = 2      # % change for strong uptrend
+DOWN_THRESHOLD = -2   # % change for strong downtrend
+VOLUME_MULT = 1.5     # volume spike multiplier
+UP_SCORE = 1          # score per bullish signal
+DOWN_SCORE = 1         # score per bearish signal
 
 def evaluate(stock, news):
     signals = []
+    score = 0
 
-    # Price momentum
-    if stock.change_pct > 2:
+    if stock.change_pct > UP_THRESHOLD:
         signals.append("STRONG_UPTREND")
+        score += UP_SCORE
     elif stock.change_pct > 0:
         signals.append("UPTREND")
-    elif stock.change_pct < -2:
+        score += UP_SCORE * 0.5
+    elif stock.change_pct < DOWN_THRESHOLD:
         signals.append("STRONG_DOWNTREND")
-    else:
+        score -= DOWN_SCORE
+    elif stock.change_pct < 0:
         signals.append("DOWNTREND")
+        score -= DOWN_SCORE * 0.5
 
-    # Volume spike
-    if stock.volume > stock.avg_volume * 1.5:
+    if hasattr(stock, 'avg_volume') and stock.avg_volume and stock.volume > stock.avg_volume * VOLUME_MULT:
         signals.append("VOLUME_SPIKE")
+        score += UP_SCORE if stock.change_pct > 0 else -DOWN_SCORE
 
-    # News sentiment
     positive_words = ["beat", "surge", "growth", "record", "upgrade"]
     negative_words = ["miss", "drop", "decline", "cut", "downgrade"]
 
@@ -31,27 +40,28 @@ def evaluate(stock, news):
         for w in positive_words:
             if w in lower:
                 signals.append("POSITIVE_NEWS")
+                score += UP_SCORE
                 break
         for w in negative_words:
             if w in lower:
                 signals.append("NEGATIVE_NEWS")
+                score -= DOWN_SCORE
                 break
 
-    return {
-        "symbol": stock.symbol,
-        "signals": signals,
-        "score": len([s for s in signals
-                      if "UP" in s or "POSITIVE" in s])
-              - len([s for s in signals
-                     if "DOWN" in s or "NEGATIVE" in s])
-    }
+    return {"symbol": getattr(stock, 'symbol', '?'), "signals": signals, "score": score}
 `,
   },
   {
     name: 'Mean Reversion',
     description: 'Buy oversold, sell overbought based on price deviation',
     code: `# Mean Reversion
-# Buy when price drops significantly, sell on recoveries
+# Tune the thresholds below, then click TRAIN to optimize
+
+OVERSOLD_THRESHOLD = -3    # % drop to consider oversold (buy)
+OVERBOUGHT_THRESHOLD = 3   # % rise to consider overbought (sell)
+VOLUME_CONFIRM_MULT = 1.5  # volume ratio to confirm signal
+DIP_BUY_SCORE = 1          # score for buying dips
+SPIKE_SELL_SCORE = 1        # score for selling spikes
 
 def evaluate(stock, news):
     # How far from average (approximation using available data)

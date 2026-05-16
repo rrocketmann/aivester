@@ -269,3 +269,102 @@ _backtest_result = {
     }
   }
 }
+
+export function extractParams(code) {
+  const lines = code.split('\n')
+  const params = []
+  const regex = /^(\w+)\s*=\s*(-?\d+\.?\d*)\s*$/
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    const match = trimmed.match(regex)
+    if (match) {
+      const name = match[1]
+      const value = parseFloat(match[2])
+      if (name !== '_' && !name.startsWith('__') && name !== 'True' && name !== 'False' && name !== 'None') {
+        const isSmall = Math.abs(value) <= 100
+        params.push({ name, originalValue: value, isSmall })
+      }
+    }
+  }
+  return params
+}
+
+export function generateParamVariants(param) {
+  const v = param.originalValue
+  if (param.isSmall) {
+    if (v === 0) return [0, 0.5, 1, 2, 5]
+    if (Math.abs(v) < 0.1) return [0, 0.01, 0.05, 0.1, 0.2, 0.5]
+    if (Math.abs(v) <= 1) return [0.5 * v, v, 1.5 * v, 2 * v, 3 * v]
+    if (Math.abs(v) <= 5) return [0.5, 1, 2, 3, 5, 10]
+    return [0.5 * v, 0.75 * v, v, 1.25 * v, 1.5 * v]
+  }
+  return [0.5 * v, 0.75 * v, v, 1.25 * v, 1.5 * v, 2 * v]
+}
+
+export function applyParam(code, name, value) {
+  const regex = new RegExp(`^${name}\\s*=\\s*-?\\d+\\.?\\d*\\s*$`, 'm')
+  return code.replace(regex, `${name} = ${value}`)
+}
+
+export async function runOptimize(code, chartData, interval, onProgress) {
+  const params = extractParams(code)
+  if (params.length === 0) {
+    return { success: false, error: 'No tunable parameters found. Add numeric constants at the top, e.g. THRESHOLD = 2' }
+  }
+
+  const tunable = params.filter(p => p.isSmall).slice(0, 5)
+  if (tunable.length === 0) {
+    return { success: false, error: 'No small numeric parameters found to optimize. Use parameters like THRESHOLD = 2 or VOLUME_MULT = 1.5' }
+  }
+
+  let bestCode = code
+  let bestResult = null
+  let bestReturnPct = -Infinity
+  const tried = []
+
+  const current = await runPythonBacktest(code, chartData, 10000, interval)
+  if (current.success && current.backtest) {
+    bestResult = current.backtest
+    bestReturnPct = current.backtest.total_return_pct
+  }
+
+  for (const param of tunable) {
+    const variants = generateParamVariants(param)
+    for (const val of variants) {
+      if (val === param.originalValue) continue
+
+      const modified = applyParam(bestCode, param.name, val)
+      const result = await runPythonBacktest(modified, chartData, 10000, interval)
+
+      if (result.success && result.backtest) {
+        tried.push({
+          param: param.name,
+          value: val,
+          return_pct: result.backtest.total_return_pct,
+          trades: result.backtest.total_trades,
+          win_rate: result.backtest.win_rate,
+        })
+
+        if (result.backtest.total_return_pct > bestReturnPct) {
+          bestReturnPct = result.backtest.total_return_pct
+          bestCode = modified
+          bestResult = result.backtest
+        }
+      }
+
+      if (onProgress) onProgress({ param: param.name, value: val, tried: tried.length })
+    }
+  }
+
+  return {
+    success: true,
+    optimizedCode: bestCode,
+    originalCode: code,
+    bestReturnPct,
+    bestResult,
+    params: tunable,
+    tried,
+    improvement: bestReturnPct - (current.backtest?.total_return_pct ?? 0),
+  }
+}

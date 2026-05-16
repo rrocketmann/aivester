@@ -3,7 +3,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { python } from '@codemirror/lang-python'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchStocks, fetchChart, fetchNews } from './services/api'
-import { runPythonPolicy, runPythonBacktest, loadPyodideEngine } from './services/python'
+import { runPythonPolicy, runPythonBacktest, loadPyodideEngine, runOptimize } from './services/python'
 import { POLICY_TEMPLATES, savePolicy, loadPolicies, deletePolicy, getShareUrl, loadCodeFromUrl } from './services/policies'
 import './App.css'
 
@@ -264,6 +264,68 @@ function App() {
     }
   }, [code, selectedStock, period, interval, activeStock, chartData, news])
 
+  const handleTrain = useCallback(async () => {
+    if (!chartData || chartData.length === 0) {
+      setResults([{ type: 'error', text: '> No chart data available for training' }])
+      return
+    }
+    setIsRunning(true)
+    setTerminal(prev => [...prev, { type: 'system', text: `$ aivester train --symbol ${selectedStock} --period ${period} --interval ${interval}` }])
+    setResults([{ type: 'info', text: '> Training: optimizing policy parameters...' }])
+
+    try {
+      const result = await runOptimize(code, chartData, interval, (progress) => {
+        setResults(prev => {
+          const last = prev[prev.length - 1]
+          if (last && last.text.startsWith('> Testing')) {
+            return [...prev.slice(0, -1), { type: 'info', text: `> Testing ${progress.param}=${progress.value}... (${progress.tried} combinations)` }]
+          }
+          return [...prev, { type: 'info', text: `> Testing ${progress.param}=${progress.value}... (${progress.tried} combinations)` }]
+        })
+      })
+
+      if (!result.success) {
+        setResults([{ type: 'error', text: `> Training failed: ${result.error}` }])
+        return
+      }
+
+      const output = []
+      output.push({ type: 'info', text: `─── Training Results (${result.tried.length} combinations tested) ───` })
+      output.push({ type: 'info', text: '' })
+
+      if (result.improvement > 0) {
+        output.push({ type: 'success', text: `  Improved return: ${result.improvement > 0 ? '+' : ''}${result.improvement.toFixed(2)}% → ${result.bestReturnPct.toFixed(2)}%` })
+        output.push({ type: 'success', text: `  Original: ${result.bestResult?.total_trades ?? 0} trades, ${result.bestResult?.win_rate ?? 0}% win rate` })
+        output.push({ type: 'info', text: '' })
+
+        const top5 = result.tried
+          .sort((a, b) => b.return_pct - a.return_pct)
+          .slice(0, 5)
+
+        output.push({ type: 'info', text: `  Top parameter values:` })
+        top5.forEach(t => {
+          const pctType = t.return_pct >= 0 ? 'success' : 'error'
+          output.push({ type: pctType, text: `    ${t.param} = ${t.value}  →  ${t.return_pct >= 0 ? '+' : ''}${t.return_pct}%  (${t.trades} trades, ${t.win_rate}% win)` })
+        })
+
+        output.push({ type: 'info', text: '' })
+        output.push({ type: 'success', text: '  Optimized policy applied to editor. Press RUN to backtest.' })
+        setCode(result.optimizedCode)
+      } else {
+        output.push({ type: 'info', text: `  No improvement found. Current parameters are already optimal or near-optimal.` })
+        output.push({ type: 'info', text: `  Best return: ${result.bestReturnPct.toFixed(2)}%` })
+      }
+
+      output.push({ type: 'success', text: 'Training complete.' })
+      setResults(output)
+      setTerminal(prev => [...prev, { type: 'system', text: '$ Training complete.' }])
+    } catch (err) {
+      setResults([{ type: 'error', text: `> Training error: ${err.message}` }])
+    } finally {
+      setIsRunning(false)
+    }
+  }, [code, chartData, selectedStock, period, interval])
+
   const handleUpload = useCallback((e) => {
     const file = e.target.files[0]
     if (!file) return
@@ -356,6 +418,9 @@ function App() {
               </div>
               <button className="run-btn" onClick={handleRun} disabled={isRunning}>
                 {isRunning ? 'RUNNING...' : 'RUN'}
+              </button>
+              <button className="train-btn" onClick={handleTrain} disabled={isRunning}>
+                TRAIN
               </button>
               <button className="save-btn" onClick={() => {
                 if (saveName.trim()) {

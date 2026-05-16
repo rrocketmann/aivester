@@ -313,6 +313,29 @@ html, body, #root {
   color: var(--red);
 }
 
+.train-btn {
+  padding: 5px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border: none;
+}
+
+.train-btn:hover {
+  opacity: 0.9;
+}
+
+.train-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .run-btn:active {
   background: var(--red-bg);
 }
