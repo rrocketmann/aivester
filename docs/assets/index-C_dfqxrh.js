@@ -83,10 +83,10 @@ ${e}
 
 if 'evaluate' in dir():
     result = evaluate(stock, news)
-    json.dumps({"success": True, "result": result}, default=str)
+    json.dumps({"success": True, "result": to_py(result)}, default=str)
 else:
     json.dumps({"success": False, "error": "No evaluate() function defined"})
-`;try{i.globals.set(`stock_data`,t),i.globals.set(`news_data`,n),i.globals.set(`chart_data`,r);let e=await i.runPythonAsync(a),o=JSON.parse(e);return{success:o.success,result:o.result,error:o.error}}catch(e){return{success:!1,error:e.message,error_type:`PythonError`}}}async function o$(e,t,n=1e4){let r=await i$(),i=`
+`;try{i.globals.set(`stock_data`,t?i.toPy(t):null),i.globals.set(`news_data`,n?i.toPy(n):[]),i.globals.set(`chart_data`,r?i.toPy(r):[]);let e=await i.runPythonAsync(a),o=JSON.parse(e);return{success:o.success,result:o.result,error:o.error}}catch(e){return{success:!1,error:e.message,error_type:`PythonError`}}}async function o$(e,t,n=1e4){let r=await i$(),i=`
 import json
 
 class ChartPoint:
@@ -192,7 +192,7 @@ json.dumps({
         "trades": trades,
     }
 })
-`;try{r.globals.set(`chart_data`,t),r.globals.set(`initial_balance`,n);let e=await r.runPythonAsync(i),a=JSON.parse(e);return{success:a.success,backtest:a.backtest}}catch(e){return{success:!1,error:e.message,error_type:`PythonError`}}}var s$=`# Aivester Policy: Momentum Scanner
+`;try{r.globals.set(`chart_data`,r.toPy(t)),r.globals.set(`initial_balance`,n);let e=await r.runPythonAsync(i),a=JSON.parse(e);return{success:a.success,backtest:a.backtest}}catch(e){return{success:!1,error:e.message,error_type:`PythonError`}}}var s$=`# Aivester Policy: Momentum Scanner
 # Evaluate stocks based on momentum and sentiment
 
 def evaluate(stock, news):

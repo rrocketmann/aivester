@@ -54,15 +54,15 @@ ${code}
 
 if 'evaluate' in dir():
     result = evaluate(stock, news)
-    json.dumps({"success": True, "result": result}, default=str)
+    json.dumps({"success": True, "result": to_py(result)}, default=str)
 else:
     json.dumps({"success": False, "error": "No evaluate() function defined"})
 `
 
   try {
-    pyodide.globals.set('stock_data', stockData)
-    pyodide.globals.set('news_data', newsData)
-    pyodide.globals.set('chart_data', chartData)
+    pyodide.globals.set('stock_data', stockData ? pyodide.toPy(stockData) : null)
+    pyodide.globals.set('news_data', newsData ? pyodide.toPy(newsData) : [])
+    pyodide.globals.set('chart_data', chartData ? pyodide.toPy(chartData) : [])
 
     const output = await pyodide.runPythonAsync(wrapperCode)
     const result = JSON.parse(output)
@@ -192,7 +192,7 @@ json.dumps({
 `
 
   try {
-    pyodide.globals.set('chart_data', chartData)
+    pyodide.globals.set('chart_data', pyodide.toPy(chartData))
     pyodide.globals.set('initial_balance', initialBalance)
 
     const output = await pyodide.runPythonAsync(wrapperCode)
