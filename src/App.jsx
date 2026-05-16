@@ -4,7 +4,7 @@ import { python } from '@codemirror/lang-python'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchStocks, fetchChart, fetchNews } from './services/api'
 import { runPythonPolicy, runPythonBacktest, loadPyodideEngine, runOptimize } from './services/python'
-import { POLICY_TEMPLATES, loadPolicies, deletePolicy, loadCodeFromUrl } from './services/policies'
+import { POLICY_TEMPLATES, loadCodeFromUrl } from './services/policies'
 import './App.css'
 
 const DEFAULT_CODE = POLICY_TEMPLATES[0].code
@@ -120,7 +120,6 @@ function App() {
   const [error, setError] = useState(null)
   const [pyodideReady, setPyodideReady] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
-  const [showSaved, setShowSaved] = useState(false)
   const [saveStatus, setSaveStatus] = useState('saved')
   const fileInputRef = useRef(null)
   const saveTimerRef = useRef(null)
@@ -275,8 +274,28 @@ function App() {
         ...prev,
         { type: 'success', text: `  Evaluated ${selectedStock} over ${period}` },
         { type: 'success', text: `  Score: ${score > 0 ? '+' : ''}${score}` },
-        { type: 'system', text: '$ Done.' },
       ])
+
+      const trainResult = await runOptimize(code, chartData, interval, (progress) => {
+        setResults(prev => {
+          const last = prev[prev.length - 1]
+          if (last && last.text.startsWith('> Optimizing')) {
+            return [...prev.slice(0, -1), { type: 'info', text: `> Optimizing ${progress.param}=${progress.value}... (${progress.tried} combos)` }]
+          }
+          return [...prev, { type: 'info', text: `> Optimizing ${progress.param}=${progress.value}... (${progress.tried} combos)` }]
+        })
+      })
+
+      if (trainResult.success && trainResult.improvement > 0) {
+        setResults(prev => [
+          ...prev,
+          { type: 'info', text: '' },
+          { type: 'success', text: `─── Auto-Tuned (+${trainResult.improvement.toFixed(2)}%) ───` },
+          { type: 'success', text: `  Optimized return: ${trainResult.bestReturnPct.toFixed(2)}%` },
+          { type: 'success', text: '  Updated policy applied to editor.' },
+        ])
+        setCode(trainResult.optimizedCode)
+      }
     } catch (err) {
       setResults([{ type: 'error', text: `> Request failed: ${err.message}` }])
       setTerminal(prev => [...prev, { type: 'error', text: `$ Error: ${err.message}` }])
@@ -284,68 +303,6 @@ function App() {
       setIsRunning(false)
     }
   }, [code, selectedStock, period, interval, activeStock, chartData, news])
-
-  const handleTrain = useCallback(async () => {
-    if (!chartData || chartData.length === 0) {
-      setResults([{ type: 'error', text: '> No chart data available for training' }])
-      return
-    }
-    setIsRunning(true)
-    setTerminal(prev => [...prev, { type: 'system', text: `$ aivester train --symbol ${selectedStock} --period ${period} --interval ${interval}` }])
-    setResults([{ type: 'info', text: '> Training: optimizing policy parameters...' }])
-
-    try {
-      const result = await runOptimize(code, chartData, interval, (progress) => {
-        setResults(prev => {
-          const last = prev[prev.length - 1]
-          if (last && last.text.startsWith('> Testing')) {
-            return [...prev.slice(0, -1), { type: 'info', text: `> Testing ${progress.param}=${progress.value}... (${progress.tried} combinations)` }]
-          }
-          return [...prev, { type: 'info', text: `> Testing ${progress.param}=${progress.value}... (${progress.tried} combinations)` }]
-        })
-      })
-
-      if (!result.success) {
-        setResults([{ type: 'error', text: `> Training failed: ${result.error}` }])
-        return
-      }
-
-      const output = []
-      output.push({ type: 'info', text: `─── Training Results (${result.tried.length} combinations tested) ───` })
-      output.push({ type: 'info', text: '' })
-
-      if (result.improvement > 0) {
-        output.push({ type: 'success', text: `  Improved return: ${result.improvement > 0 ? '+' : ''}${result.improvement.toFixed(2)}% → ${result.bestReturnPct.toFixed(2)}%` })
-        output.push({ type: 'success', text: `  Original: ${result.bestResult?.total_trades ?? 0} trades, ${result.bestResult?.win_rate ?? 0}% win rate` })
-        output.push({ type: 'info', text: '' })
-
-        const top5 = result.tried
-          .sort((a, b) => b.return_pct - a.return_pct)
-          .slice(0, 5)
-
-        output.push({ type: 'info', text: `  Top parameter values:` })
-        top5.forEach(t => {
-          const pctType = t.return_pct >= 0 ? 'success' : 'error'
-          output.push({ type: pctType, text: `    ${t.param} = ${t.value}  →  ${t.return_pct >= 0 ? '+' : ''}${t.return_pct}%  (${t.trades} trades, ${t.win_rate}% win)` })
-        })
-
-        output.push({ type: 'info', text: '' })
-        output.push({ type: 'success', text: '  Optimized policy applied to editor. Press RUN to backtest.' })
-        setCode(result.optimizedCode)
-      } else {
-        output.push({ type: 'info', text: `  No improvement found. Current parameters are already optimal or near-optimal.` })
-        output.push({ type: 'info', text: `  Best return: ${result.bestReturnPct.toFixed(2)}%` })
-      }
-
-      output.push({ type: 'success', text: 'Training complete.' })
-      setResults(output)
-      setTerminal(prev => [...prev, { type: 'system', text: '$ Training complete.' }])
-    } catch (err) {
-      setResults([{ type: 'error', text: `> Training error: ${err.message}` }])
-    } finally {
-      setIsRunning(false)
-    }
-  }, [code, chartData, selectedStock, period, interval])
 
   const handleUpload = useCallback((e) => {
     const file = e.target.files[0]
@@ -400,9 +357,6 @@ function App() {
               <button className="upload-btn" onClick={() => setShowTemplates(!showTemplates)}>
                 TEMPLATES
               </button>
-              <button className="upload-btn" onClick={() => setShowSaved(!showSaved)}>
-                SAVED
-              </button>
               <button className="upload-btn" onClick={() => fileInputRef.current?.click()}>
                 UPLOAD
               </button>
@@ -440,9 +394,6 @@ function App() {
               <button className="run-btn" onClick={handleRun} disabled={isRunning}>
                 {isRunning ? 'RUNNING...' : 'RUN'}
               </button>
-              <button className="train-btn" onClick={handleTrain} disabled={isRunning}>
-                TRAIN
-              </button>
               <span className={`save-indicator ${saveStatus}`}>
                 {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
               </span>
@@ -460,28 +411,6 @@ function App() {
                 </div>
               </div>
             )}
-            {showSaved && (() => {
-              const policies = loadPolicies()
-              const names = Object.keys(policies)
-              return (
-                <div className="template-panel">
-                  {names.length === 0 ? (
-                    <div className="template-desc">No saved policies yet.</div>
-                  ) : (
-                    <div className="template-list">
-                      {names.map(name => (
-                        <div key={name} className="template-item saved-item">
-                          <div className="saved-row" onClick={() => { setCode(policies[name].code); setShowSaved(false); setTerminal(prev => [...prev, { type: 'system', text: `$ Loaded: ${name}` }]) }}>
-                            <div className="template-name">{name}</div>
-                          </div>
-                          <button className="delete-btn" onClick={() => { deletePolicy(name); setShowSaved(false); setTerminal(prev => [...prev, { type: 'system', text: `$ Deleted: ${name}` }]) }}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
             <div className="editor-body">
             <CodeMirror
               value={code}
