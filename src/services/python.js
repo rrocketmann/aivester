@@ -114,9 +114,19 @@ class ChartPoint:
 
 chart = [ChartPoint(dict(c)) for c in chart_data]
 
-# Determine which data points to evaluate based on interval
-step_map = {"every": 1, "hourly": 1, "daily": 1, "weekly": max(1, len(chart) // 26)}
-effective_step = step_map.get(eval_interval, 1)
+# Determine step size based on interval and chart length
+# hourly: every point for intraday, every bar for daily data
+# daily: skip to roughly 22 decisions (trading days in a month)
+# weekly: skip to roughly 4-5 decisions per month
+n = len(chart)
+if eval_interval == "hourly":
+    effective_step = 1
+elif eval_interval == "daily":
+    effective_step = max(1, n // 22)
+elif eval_interval == "weekly":
+    effective_step = max(1, n // 5)
+else:
+    effective_step = 1
 
 ${code}
 
@@ -134,14 +144,22 @@ for i in range(len(chart)):
         continue
 
     point = chart[i]
-    stock_data = {
-        "price": point.close,
-        "change_pct": 0,
-        "volume": point.volume,
-    }
+    change_pct = 0
     if i > 0:
         prev = chart[i-1]
-        stock_data["change_pct"] = ((point.close - prev.close) / prev.close) * 100 if prev.close else 0
+        change_pct = ((point.close - prev.close) / prev.close) * 100 if prev.close else 0
+
+    stock_data = {
+        "symbol": "BACKTEST",
+        "price": point.close,
+        "change_pct": change_pct,
+        "volume": getattr(point, 'volume', 0),
+        "avg_volume": getattr(point, 'volume', 0),
+        "open": getattr(point, 'open', point.close),
+        "high": getattr(point, 'high', point.close),
+        "low": getattr(point, 'low', point.close),
+        "close": point.close,
+    }
 
     class TempStock:
         def __init__(self, d):

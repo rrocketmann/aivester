@@ -53,7 +53,6 @@ def evaluate(stock, news):
 
 const TIME_PERIODS = ['1D', '1W', '1M', '3M', '1Y']
 const INTERVAL_OPTIONS = [
-  { value: 'every', label: 'Every Bar' },
   { value: 'hourly', label: 'Hourly' },
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
