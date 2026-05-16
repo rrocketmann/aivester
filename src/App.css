@@ -195,27 +195,6 @@ html, body, #root {
   color: var(--green);
 }
 
-.save-btn, .share-btn {
-  padding: 5px 12px;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  letter-spacing: 0.3px;
-}
-
-.save-btn:hover {
-  border-color: var(--green);
-  color: var(--green);
-}
-
-.share-btn:hover {
-  border-color: #3b82f6;
-  color: #3b82f6;
-}
-
 .template-panel {
   background: var(--surface-alt);
   border-bottom: 1px solid var(--border);
@@ -282,21 +261,6 @@ html, body, #root {
   cursor: pointer;
 }
 
-.save-input {
-  flex: 1;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  outline: none;
-}
-
-.save-input:focus {
-  border-color: var(--green);
-}
-
 .run-btn {
   padding: 5px 16px;
   background: var(--surface);
@@ -334,6 +298,26 @@ html, body, #root {
 .train-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.save-indicator {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  transition: all 0.2s;
+}
+
+.save-indicator.saving {
+  color: var(--red);
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.save-indicator.saved {
+  color: #34c759;
+  background: rgba(52, 199, 89, 0.1);
 }
 
 .run-btn:active {

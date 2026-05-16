@@ -4,7 +4,7 @@ import { python } from '@codemirror/lang-python'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchStocks, fetchChart, fetchNews } from './services/api'
 import { runPythonPolicy, runPythonBacktest, loadPyodideEngine, runOptimize } from './services/python'
-import { POLICY_TEMPLATES, savePolicy, loadPolicies, deletePolicy, getShareUrl, loadCodeFromUrl } from './services/policies'
+import { POLICY_TEMPLATES, loadPolicies, deletePolicy, loadCodeFromUrl } from './services/policies'
 import './App.css'
 
 const DEFAULT_CODE = POLICY_TEMPLATES[0].code
@@ -95,7 +95,12 @@ function StockChart({ stock, period, chartData }) {
 }
 
 function App() {
-  const [code, setCode] = useState(DEFAULT_CODE)
+  const [code, setCode] = useState(() => {
+    try {
+      const saved = localStorage.getItem('aivester_autosave')
+      return saved || DEFAULT_CODE
+    } catch { return DEFAULT_CODE }
+  })
   const [stocks, setStocks] = useState([])
   const [selectedStock, setSelectedStock] = useState(null)
   const [period, setPeriod] = useState('1M')
@@ -116,8 +121,24 @@ function App() {
   const [pyodideReady, setPyodideReady] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [showSaved, setShowSaved] = useState(false)
-  const [saveName, setSaveName] = useState('')
+  const [saveStatus, setSaveStatus] = useState('saved')
   const fileInputRef = useRef(null)
+  const saveTimerRef = useRef(null)
+  const initialLoadRef = useRef(true)
+
+  useEffect(() => {
+    if (initialLoadRef.current) {
+      initialLoadRef.current = false
+      return
+    }
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    setSaveStatus('saving')
+    saveTimerRef.current = setTimeout(() => {
+      try { localStorage.setItem('aivester_autosave', code) } catch {}
+      setSaveStatus('saved')
+    }, 500)
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+  }, [code])
 
   useEffect(() => {
     async function init() {
@@ -422,21 +443,9 @@ function App() {
               <button className="train-btn" onClick={handleTrain} disabled={isRunning}>
                 TRAIN
               </button>
-              <button className="save-btn" onClick={() => {
-                if (saveName.trim()) {
-                  savePolicy(saveName.trim(), code)
-                  setTerminal(prev => [...prev, { type: 'success', text: `$ Saved policy: ${saveName.trim()}` }])
-                  setSaveName('')
-                }
-              }}>SAVE</button>
-              <button className="share-btn" onClick={() => {
-                const url = getShareUrl(code)
-                navigator.clipboard.writeText(url).then(() => {
-                  setTerminal(prev => [...prev, { type: 'success', text: '$ Share URL copied to clipboard' }])
-                }).catch(() => {
-                  setTerminal(prev => [...prev, { type: 'info', text: `$ Share URL: ${url}` }])
-                })
-              }}>SHARE</button>
+              <span className={`save-indicator ${saveStatus}`}>
+                {saveStatus === 'saving' ? 'Saving...' : 'Saved'}
+              </span>
             </div>
           </div>
           {showTemplates && (
@@ -457,7 +466,7 @@ function App() {
               return (
                 <div className="template-panel">
                   {names.length === 0 ? (
-                    <div className="template-desc">No saved policies yet. Click SAVE to save your current policy.</div>
+                    <div className="template-desc">No saved policies yet.</div>
                   ) : (
                     <div className="template-list">
                       {names.map(name => (
@@ -473,11 +482,6 @@ function App() {
                 </div>
               )
             })()}
-            {saveName !== '' && (
-              <div style={{ display: 'flex', padding: '4px 8px', gap: '4px', background: 'var(--surface-alt)', borderTop: '1px solid var(--border)' }}>
-                <input className="save-input" value={saveName} onChange={e => setSaveName(e.target.value)} placeholder="Policy name..." onKeyDown={e => { if (e.key === 'Enter') { savePolicy(saveName, code); setTerminal(prev => [...prev, { type: 'success', text: `$ Saved: ${saveName}` }]); setSaveName('') } }} />
-              </div>
-            )}
             <div className="editor-body">
             <CodeMirror
               value={code}
