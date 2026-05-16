@@ -25,12 +25,25 @@ export async function loadPyodideEngine() {
   return loadingPromise
 }
 
+function pyToJs(obj) {
+  if (obj === null || obj === undefined) return obj
+  if (typeof obj !== 'object') return obj
+  if (Array.isArray(obj)) return obj.map(pyToJs)
+  if (obj.toJs) {
+    try { return pyToJs(obj.toJs({ create_pyproxies: false })) } catch { /* fallthrough */ }
+  }
+  const result = {}
+  for (const key of Object.keys(obj)) {
+    result[key] = pyToJs(obj[key])
+  }
+  return result
+}
+
 export async function runPythonPolicy(code, stockData, newsData, chartData) {
   const pyodide = await loadPyodideEngine()
 
   const wrapperCode = `
 import json
-from pyodide.ffi import to_py
 
 class Stock:
     def __init__(self, data):
@@ -47,30 +60,37 @@ class ChartPoint:
         for key, value in data.items():
             setattr(self, key, value)
 
-stock = Stock(stock_data) if stock_data else None
-news = [NewsArticle(n) for n in news_data]
-chart = [ChartPoint(c) for c in chart_data]
+stock = Stock(dict(stock_data)) if stock_data else None
+news = [NewsArticle(dict(n)) for n in news_data]
+chart = [ChartPoint(dict(c)) for c in chart_data]
 
 ${code}
 
+_policy_result = None
 if 'evaluate' in dir():
-    result = evaluate(stock, news)
-    json.dumps({"success": True, "result": to_py(result)}, default=str)
-else:
-    json.dumps({"success": False, "error": "No evaluate() function defined"})
+    try:
+        _policy_result = evaluate(stock, news)
+    except Exception as e:
+        _policy_result = {"error": str(e)}
 `
 
   try {
-    pyodide.globals.set('stock_data', stockData ? pyodide.toPy(stockData) : null)
-    pyodide.globals.set('news_data', newsData ? pyodide.toPy(newsData) : [])
-    pyodide.globals.set('chart_data', chartData ? pyodide.toPy(chartData) : [])
+    pyodide.globals.set('stock_data', pyodide.toPy(stockData || {}))
+    pyodide.globals.set('news_data', pyodide.toPy(newsData || []))
+    pyodide.globals.set('chart_data', pyodide.toPy(chartData || []))
 
-    const output = await pyodide.runPythonAsync(wrapperCode)
-    const result = JSON.parse(output)
+    await pyodide.runPythonAsync(wrapperCode)
+
+    const rawResult = pyodide.globals.get('_policy_result')
+    const result = pyToJs(rawResult)
+
+    if (result && result.error) {
+      return { success: false, error: result.error }
+    }
+
     return {
-      success: result.success,
-      result: result.result,
-      error: result.error,
+      success: true,
+      result: result,
     }
   } catch (err) {
     return {
@@ -92,10 +112,11 @@ class ChartPoint:
         for key, value in data.items():
             setattr(self, key, value)
 
-chart = [ChartPoint(c) for c in chart_data]
+chart = [ChartPoint(dict(c)) for c in chart_data]
 
 ${code}
 
+_backtest_result = None
 trades = []
 balance = initial_balance
 shares = 0
@@ -175,32 +196,32 @@ if shares > 0 and len(chart) > 0:
 else:
     total_value = balance
 
-json.dumps({
-    "success": True,
-    "backtest": {
-        "initial_balance": initial_balance,
-        "final_balance": round(total_value, 2),
-        "total_return": round(total_value - initial_balance, 2),
-        "total_return_pct": round(((total_value - initial_balance) / initial_balance) * 100, 2),
-        "peak_balance": round(peak_balance, 2),
-        "max_drawdown_pct": round(((peak_balance - total_value) / peak_balance) * 100, 2) if peak_balance > 0 else 0,
-        "total_trades": total_trades,
-        "winning_trades": winning_trades,
-        "win_rate": round((winning_trades / total_trades) * 100, 1) if total_trades > 0 else 0,
-        "trades": trades,
-    }
-})
+_backtest_result = {
+    "initial_balance": initial_balance,
+    "final_balance": round(total_value, 2),
+    "total_return": round(total_value - initial_balance, 2),
+    "total_return_pct": round(((total_value - initial_balance) / initial_balance) * 100, 2),
+    "peak_balance": round(peak_balance, 2),
+    "max_drawdown_pct": round(((peak_balance - total_value) / peak_balance) * 100, 2) if peak_balance > 0 else 0,
+    "total_trades": total_trades,
+    "winning_trades": winning_trades,
+    "win_rate": round((winning_trades / total_trades) * 100, 1) if total_trades > 0 else 0,
+    "trades": trades,
+}
 `
 
   try {
     pyodide.globals.set('chart_data', pyodide.toPy(chartData))
     pyodide.globals.set('initial_balance', initialBalance)
 
-    const output = await pyodide.runPythonAsync(wrapperCode)
-    const result = JSON.parse(output)
+    await pyodide.runPythonAsync(wrapperCode)
+
+    const rawResult = pyodide.globals.get('_backtest_result')
+    const result = pyToJs(rawResult)
+
     return {
-      success: result.success,
-      backtest: result.backtest,
+      success: true,
+      backtest: result,
     }
   } catch (err) {
     return {
