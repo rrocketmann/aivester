@@ -75,9 +75,9 @@ if 'evaluate' in dir():
 `
 
   try {
-    pyodide.globals.set('stock_data', pyodide.toPy(stockData || {}))
-    pyodide.globals.set('news_data', pyodide.toPy(newsData || []))
-    pyodide.globals.set('chart_data', pyodide.toPy(chartData || []))
+    pyodide.globals.set('stock_data', stockData ? pyodide.toPy(stockData) : null)
+    pyodide.globals.set('news_data', newsData ? pyodide.toPy(newsData) : [])
+    pyodide.globals.set('chart_data', chartData ? pyodide.toPy(chartData) : [])
 
     await pyodide.runPythonAsync(wrapperCode)
 
@@ -101,7 +101,7 @@ if 'evaluate' in dir():
   }
 }
 
-export async function runPythonBacktest(code, chartData, initialBalance = 10000) {
+export async function runPythonBacktest(code, chartData, initialBalance = 10000, interval = 'daily') {
   const pyodide = await loadPyodideEngine()
 
   const wrapperCode = `
@@ -114,9 +114,13 @@ class ChartPoint:
 
 chart = [ChartPoint(dict(c)) for c in chart_data]
 
+# Determine which data points to evaluate based on interval
+step_map = {"every": 1, "hourly": 1, "daily": 1, "weekly": max(1, len(chart) // 26)}
+effective_step = step_map.get(eval_interval, 1)
+
 ${code}
 
-_backtest_result = None
+snapshots = []
 trades = []
 balance = initial_balance
 shares = 0
@@ -126,6 +130,9 @@ total_trades = 0
 winning_trades = 0
 
 for i in range(len(chart)):
+    if i % effective_step != 0 and i != len(chart) - 1:
+        continue
+
     point = chart[i]
     stock_data = {
         "price": point.close,
@@ -149,10 +156,12 @@ for i in range(len(chart)):
     except:
         score = 0
 
+    action = "HOLD"
     if score > 0 and shares == 0:
         shares = balance / point.close
         entry_price = point.close
         balance = 0
+        action = "BUY "
     elif score <= 0 and shares > 0:
         sale = shares * point.close
         pnl = sale - (shares * entry_price)
@@ -170,10 +179,19 @@ for i in range(len(chart)):
         balance = sale
         shares = 0
         entry_price = 0
+        action = "SELL"
 
     total_value = balance + (shares * point.close)
     if total_value > peak_balance:
         peak_balance = total_value
+
+    snapshots.append({
+        "date": point.date,
+        "action": action,
+        "price": round(point.close, 2),
+        "value": round(total_value, 2),
+        "return_pct": round(((total_value - initial_balance) / initial_balance) * 100, 2),
+    })
 
 if shares > 0 and len(chart) > 0:
     last_price = chart[-1].close
@@ -207,12 +225,14 @@ _backtest_result = {
     "winning_trades": winning_trades,
     "win_rate": round((winning_trades / total_trades) * 100, 1) if total_trades > 0 else 0,
     "trades": trades,
+    "snapshots": snapshots,
 }
 `
 
   try {
     pyodide.globals.set('chart_data', pyodide.toPy(chartData))
     pyodide.globals.set('initial_balance', initialBalance)
+    pyodide.globals.set('eval_interval', interval)
 
     await pyodide.runPythonAsync(wrapperCode)
 

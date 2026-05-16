@@ -1,7 +1,9 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { python } from '@codemirror/lang-python'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { fetchStocks, fetchChart, fetchNews } from './services/api'
+import { runPythonPolicy, runPythonBacktest, loadPyodideEngine } from './services/python'
 import './App.css'
 
 const DEFAULT_CODE = `# Aivester Policy: Momentum Scanner
@@ -29,7 +31,7 @@ def evaluate(stock, news):
     negative_words = ["miss", "drop", "decline", "cut", "downgrade"]
 
     for article in news:
-        lower = article["title"].lower()
+        lower = article.title.lower()
         for w in positive_words:
             if w in lower:
                 signals.append("POSITIVE_NEWS")
@@ -50,111 +52,35 @@ def evaluate(stock, news):
 `
 
 const TIME_PERIODS = ['1D', '1W', '1M', '3M', '1Y']
-
-function generateChartData(basePrice, trend, days) {
-  const points = []
-  let price = basePrice * 0.94
-  for (let i = days; i >= 0; i--) {
-    const noise = (Math.random() - 0.48) * basePrice * 0.015
-    price += trend * (days / 30) + noise
-    price = Math.max(price, basePrice * 0.82)
-    const date = new Date()
-    date.setDate(date.getDate() - i)
-    points.push({
-      date: `${date.getMonth() + 1}/${date.getDate()}`,
-      price: Math.round(price * 100) / 100,
-      volume: Math.floor(Math.random() * 40000000 + 10000000),
-    })
-  }
-  return points
-}
-
-const DAY_MAP = { '1D': 1, '1W': 7, '1M': 30, '3M': 90, '1Y': 365 }
-
-const STOCK_DATA = [
-  { symbol: 'AAPL', name: 'Apple Inc.', price: 189.84, change: 3.21, change_pct: 1.72, volume: 54200000, avg_volume: 48000000, trend: 0.12 },
-  { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 878.37, change: 14.52, change_pct: 1.68, volume: 41000000, avg_volume: 38000000, trend: 0.55 },
-  { symbol: 'TSLA', name: 'Tesla Inc.', price: 248.42, change: -5.18, change_pct: -2.04, volume: 82000000, avg_volume: 60000000, trend: -0.18 },
-  { symbol: 'MSFT', name: 'Microsoft Corp.', price: 417.88, change: 2.34, change_pct: 0.56, volume: 22000000, avg_volume: 25000000, trend: 0.08 },
-  { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 174.13, change: -1.09, change_pct: -0.62, volume: 18900000, avg_volume: 21000000, trend: -0.05 },
+const INTERVAL_OPTIONS = [
+  { value: 'every', label: 'Every Bar' },
+  { value: 'hourly', label: 'Hourly' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
 ]
+const DEFAULT_SYMBOLS = ['AAPL', 'NVDA', 'TSLA', 'MSFT', 'GOOGL', 'AMZN', 'META']
 
-const ALL_NEWS = [
-  { title: "Apple beats Q4 earnings estimates with record iPhone revenue", source: "Reuters", time: "2h ago", symbols: ['AAPL'] },
-  { title: "NVIDIA surge continues as AI chip demand skyrockets", source: "Bloomberg", time: "3h ago", symbols: ['NVDA'] },
-  { title: "Tesla deliveries miss estimates amid production delays", source: "CNBC", time: "4h ago", symbols: ['TSLA'] },
-  { title: "Microsoft cloud growth hits record high in quarterly results", source: "WSJ", time: "5h ago", symbols: ['MSFT'] },
-  { title: "Alphabet faces antitrust ruling that could reshape search market", source: "FT", time: "6h ago", symbols: ['GOOGL'] },
-  { title: "Fed signals potential rate cut as inflation data comes in soft", source: "Reuters", time: "7h ago", symbols: [] },
-  { title: "Semiconductor stocks rally on broad-based chip demand", source: "MarketWatch", time: "8h ago", symbols: ['NVDA'] },
-  { title: "Oil prices drop on OPEC production increase plans", source: "Bloomberg", time: "9h ago", symbols: [] },
-  { title: "Apple Vision Pro sales beat expectations in first quarter", source: "CNBC", time: "10h ago", symbols: ['AAPL'] },
-  { title: "Tesla announces new battery technology with 50% more range", source: "Reuters", time: "11h ago", symbols: ['TSLA'] },
-  { title: "Microsoft Azure wins major Pentagon cloud contract", source: "WSJ", time: "12h ago", symbols: ['MSFT'] },
-  { title: "NVIDIA announces next-gen GPU architecture at GTC", source: "Bloomberg", time: "1d ago", symbols: ['NVDA'] },
-]
+function StockChart({ stock, period, chartData }) {
+  const periodChange = useMemo(() => {
+    if (!chartData || chartData.length < 2) return null
+    const first = chartData[0].price
+    const last = chartData[chartData.length - 1].price
+    const change = last - first
+    const changePct = (change / first) * 100
+    return { change, changePct }
+  }, [chartData])
 
-function getRelevantNews(selectedStock) {
-  const stock = STOCK_DATA.find(s => s.symbol === selectedStock)
-  if (!stock) return ALL_NEWS
-  const stockName = stock.name.toLowerCase().split(' ')[0]
-  const relevant = ALL_NEWS.filter(n => {
-    const lower = n.title.toLowerCase()
-    return lower.includes(selectedStock.toLowerCase()) || lower.includes(stockName)
-  })
-  const rest = ALL_NEWS.filter(n => !relevant.includes(n))
-  return [...relevant, ...rest]
-}
-
-function runPolicy(code, selectedStock, period) {
-  const stock = STOCK_DATA.find(s => s.symbol === selectedStock) || STOCK_DATA[0]
-  const output = []
-  output.push({ type: 'info', text: `> Evaluating ${stock.symbol} — ${stock.name}` })
-  output.push({ type: 'info', text: `  Price: $${stock.price.toFixed(2)}  Change: ${stock.change_pct > 0 ? '+' : ''}${stock.change_pct.toFixed(2)}%` })
-  output.push({ type: 'info', text: `  Volume: ${(stock.volume / 1e6).toFixed(1)}M (avg: ${(stock.avg_volume / 1e6).toFixed(1)}M)` })
-  output.push({ type: 'info', text: `  Period: ${period}` })
-  output.push({ type: 'info', text: '' })
-
-  const signals = []
-  if (stock.change_pct > 2) signals.push('STRONG_UPTREND')
-  else if (stock.change_pct > 0) signals.push('UPTREND')
-  else if (stock.change_pct < -2) signals.push('STRONG_DOWNTREND')
-  else signals.push('DOWNTREND')
-
-  if (stock.volume > stock.avg_volume * 1.5) signals.push('VOLUME_SPIKE')
-
-  const positive_words = ['beat', 'surge', 'growth', 'record', 'upgrade']
-  const negative_words = ['miss', 'drop', 'decline', 'cut', 'downgrade']
-
-  const news = getRelevantNews(selectedStock).slice(0, 5)
-  news.forEach(article => {
-    const lower = article.title.toLowerCase()
-    if (positive_words.some(w => lower.includes(w))) signals.push('POSITIVE_NEWS')
-    if (negative_words.some(w => lower.includes(w))) signals.push('NEGATIVE_NEWS')
-  })
-
-  const positive = signals.filter(s => s.includes('UP') || s.includes('POSITIVE')).length
-  const negative = signals.filter(s => s.includes('DOWN') || s.includes('NEGATIVE')).length
-  const score = positive - negative
-
-  output.push({ type: 'info', text: `Signals detected:` })
-  signals.forEach(s => {
-    const type = (s.includes('UP') || s.includes('POSITIVE')) ? 'success' : (s.includes('DOWN') || s.includes('NEGATIVE')) ? 'error' : 'info'
-    output.push({ type, text: `  [${s}]` })
-  })
-  output.push({ type: 'info', text: '' })
-  output.push({ type: 'info', text: `Result for ${stock.symbol}:` })
-  output.push({ type: score > 0 ? 'success' : score < 0 ? 'error' : 'info', text: `  Score: ${score > 0 ? '+' : ''}${score} — ${score > 0 ? 'BULLISH' : score < 0 ? 'BEARISH' : 'NEUTRAL'}` })
-  output.push({ type: 'info', text: '' })
-  output.push({ type: 'success', text: 'Policy evaluation complete.' })
-  return output
-}
-
-function StockChart({ stock, period }) {
-  const isPositive = stock.change_pct >= 0
+  const displayChangePct = periodChange?.changePct ?? stock?.change_pct
+  const isPositive = displayChangePct >= 0
   const color = isPositive ? '#22c55e' : '#ef4444'
-  const days = DAY_MAP[period]
-  const chart = useMemo(() => generateChartData(stock.price, stock.trend, days), [stock.symbol, period])
+
+  if (!stock || !chartData) {
+    return (
+      <div className="chart-container">
+        <div className="chart-loading">Loading chart data...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="chart-container">
@@ -164,20 +90,28 @@ function StockChart({ stock, period }) {
           <div className="chart-name">{stock.name}</div>
         </div>
         <div className="chart-price-block">
-          <span className="chart-price">${stock.price.toFixed(2)}</span>
+          <span className="chart-price">${stock.price?.toFixed(2)}</span>
           <span className={`chart-change ${isPositive ? 'positive' : 'negative'}`}>
-            {isPositive ? '+' : ''}{stock.change_pct.toFixed(2)}%
+            {isPositive ? '+' : ''}{displayChangePct?.toFixed(2)}%
           </span>
         </div>
       </div>
       <div className="chart-area">
         <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={chart} margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
-            <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+          <AreaChart data={chartData} margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
+            <XAxis
+              dataKey="date"
+              tick={{ fontSize: 11, fill: 'var(--text-muted)' }}
+              axisLine={false}
+              tickLine={false}
+              interval="preserveStartEnd"
+              minTickGap={5}
+            />
             <YAxis domain={['auto', 'auto']} tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} width={50} />
             <Tooltip
               contentStyle={{ fontSize: 12, border: '1px solid var(--border)', background: 'var(--surface)' }}
-              formatter={(v) => [`$${v.toFixed(2)}`, 'Price']}
+              formatter={(v) => [`$${v?.toFixed(2)}`, 'Price']}
+              labelFormatter={(label) => `Date: ${label}`}
             />
             <Area type="monotone" dataKey="price" stroke={color} fill={color} fillOpacity={0.08} strokeWidth={2} dot={false} />
           </AreaChart>
@@ -186,16 +120,16 @@ function StockChart({ stock, period }) {
       <div className="chart-stats">
         <div className="chart-stat">
           <div className="chart-stat-label">Volume</div>
-          <div className="chart-stat-value">{(stock.volume / 1e6).toFixed(1)}M</div>
+          <div className="chart-stat-value">{stock.volume ? (stock.volume / 1e6).toFixed(1) + 'M' : 'N/A'}</div>
         </div>
         <div className="chart-stat">
           <div className="chart-stat-label">Avg Volume</div>
-          <div className="chart-stat-value">{(stock.avg_volume / 1e6).toFixed(1)}M</div>
+          <div className="chart-stat-value">{stock.avg_volume ? (stock.avg_volume / 1e6).toFixed(1) + 'M' : 'N/A'}</div>
         </div>
         <div className="chart-stat">
           <div className="chart-stat-label">Change</div>
           <div className={`chart-stat-value ${isPositive ? 'positive' : 'negative'}`}>
-            {isPositive ? '+' : ''}${stock.change.toFixed(2)}
+            {isPositive ? '+' : ''}${stock.change?.toFixed(2)}
           </div>
         </div>
       </div>
@@ -205,38 +139,170 @@ function StockChart({ stock, period }) {
 
 function App() {
   const [code, setCode] = useState(DEFAULT_CODE)
-  const [selectedStock, setSelectedStock] = useState('AAPL')
+  const [stocks, setStocks] = useState([])
+  const [selectedStock, setSelectedStock] = useState(null)
   const [period, setPeriod] = useState('1M')
+  const [interval, setInterval_] = useState('daily')
+  const [chartData, setChartData] = useState([])
+  const [news, setNews] = useState([])
   const [results, setResults] = useState([
     { type: 'info', text: '> Press Run to evaluate policy on selected stock' },
     { type: 'info', text: '> Select a stock tab to change the evaluation target' },
   ])
   const [terminal, setTerminal] = useState([
-    { type: 'system', text: '$ aivester v0.1.0' },
-    { type: 'system', text: '$ Ready.' },
+    { type: 'system', text: '$ aivester v0.3.0 — Frontend Only' },
+    { type: 'system', text: '$ Loading Python engine...' },
   ])
   const [isRunning, setIsRunning] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [pyodideReady, setPyodideReady] = useState(false)
   const fileInputRef = useRef(null)
 
-  const activeStock = STOCK_DATA.find(s => s.symbol === selectedStock) || STOCK_DATA[0]
-  const news = useMemo(() => getRelevantNews(selectedStock), [selectedStock])
+  useEffect(() => {
+    async function init() {
+      try {
+        setLoading(true)
+        setError(null)
+        const [stocksData] = await Promise.all([
+          fetchStocks(DEFAULT_SYMBOLS),
+          loadPyodideEngine().then(() => setPyodideReady(true)),
+        ])
+        setStocks(stocksData)
+        if (stocksData.length > 0) {
+          setSelectedStock(stocksData[0].symbol)
+        }
+        setTerminal(prev => [...prev, { type: 'success', text: '$ Live market data connected.' }])
+        setTerminal(prev => [...prev, { type: 'success', text: '$ Python engine ready.' }])
+      } catch (err) {
+        setError(err.message)
+        setTerminal(prev => [...prev, { type: 'error', text: `$ Error: ${err.message}` }])
+      } finally {
+        setLoading(false)
+      }
+    }
+    init()
+  }, [])
 
-  const handleRun = useCallback(() => {
+  useEffect(() => {
+    if (!selectedStock) return
+
+    async function loadData() {
+      try {
+        const [chart, newsData] = await Promise.all([
+          fetchChart(selectedStock, period),
+          fetchNews(selectedStock),
+        ])
+        setChartData(chart || [])
+        setNews(newsData || [])
+      } catch (err) {
+        setTerminal(prev => [...prev, { type: 'error', text: `$ Failed to load data: ${err.message}` }])
+      }
+    }
+    loadData()
+  }, [selectedStock, period])
+
+  const activeStock = useMemo(
+    () => stocks.find(s => s.symbol === selectedStock),
+    [stocks, selectedStock]
+  )
+
+  const handleRun = useCallback(async () => {
+    if (!selectedStock) return
     setIsRunning(true)
     setTerminal(prev => [...prev, { type: 'system', text: `$ aivester run --symbol ${selectedStock} --period ${period}` }])
     setResults([{ type: 'info', text: '> Running policy...' }])
-    setTimeout(() => {
-      const result = runPolicy(code, selectedStock, period)
-      setResults(result)
+
+    try {
+      const stock = activeStock || { symbol: selectedStock, price: 0, change_pct: 0, volume: 0, avg_volume: 0 }
+
+      const policyResult = await runPythonPolicy(code, stock, news.slice(0, 10), chartData)
+
+      if (!policyResult.success) {
+        setResults([
+          { type: 'error', text: `> Policy execution failed: ${policyResult.error}` },
+        ])
+        setTerminal(prev => [
+          ...prev,
+          { type: 'error', text: `  Error: ${policyResult.error}` },
+          { type: 'system', text: '$ Done.' },
+        ])
+        return
+      }
+
+      const result = policyResult.result
+      const output = []
+      output.push({ type: 'info', text: `> Evaluating ${selectedStock} — ${activeStock?.name || ''}` })
+      output.push({ type: 'info', text: `  Price: $${stock.price?.toFixed(2)}  Change: ${stock.change_pct > 0 ? '+' : ''}${stock.change_pct?.toFixed(2)}%` })
+      output.push({ type: 'info', text: `  Volume: ${stock.volume ? (stock.volume / 1e6).toFixed(1) + 'M' : 'N/A'}` })
+      output.push({ type: 'info', text: `  Period: ${period}` })
+      output.push({ type: 'info', text: '' })
+
+      if (result.signals && Array.isArray(result.signals)) {
+        output.push({ type: 'info', text: `Signals detected:` })
+        result.signals.forEach(s => {
+          const type = (s.includes('UP') || s.includes('POSITIVE')) ? 'success' : (s.includes('DOWN') || s.includes('NEGATIVE')) ? 'error' : 'info'
+          output.push({ type, text: `  [${s}]` })
+        })
+        output.push({ type: 'info', text: '' })
+      }
+
+      const score = result.score ?? 0
+      output.push({ type: 'info', text: `Result for ${selectedStock}:` })
+      output.push({ type: score > 0 ? 'success' : score < 0 ? 'error' : 'info', text: `  Score: ${score > 0 ? '+' : ''}${score} — ${score > 0 ? 'BULLISH' : score < 0 ? 'BEARISH' : 'NEUTRAL'}` })
+      output.push({ type: 'info', text: '' })
+
+      setTerminal(prev => [...prev, { type: 'system', text: '$ Running paper trading backtest...' }])
+
+      const backtestResult = await runPythonBacktest(code, chartData, 10000, interval)
+
+      if (backtestResult.success && backtestResult.backtest) {
+        const bt = backtestResult.backtest
+        output.push({ type: 'info', text: `─── Paper Trading (${period}, ${interval} decisions) ───` })
+        output.push({ type: 'info', text: `  Start: $${bt.initial_balance.toLocaleString()}  →  End: $${bt.final_balance.toLocaleString()}` })
+        const returnColor = bt.total_return >= 0 ? 'success' : 'error'
+        output.push({ type: returnColor, text: `  Return: ${bt.total_return >= 0 ? '+' : ''}$${bt.total_return.toLocaleString()} (${bt.total_return_pct >= 0 ? '+' : ''}${bt.total_return_pct}%)` })
+        output.push({ type: 'info', text: `  Trades: ${bt.total_trades}  |  Win Rate: ${bt.win_rate}%  |  Drawdown: ${bt.max_drawdown_pct}%` })
+        output.push({ type: 'info', text: '' })
+
+        if (bt.snapshots && bt.snapshots.length > 0) {
+          output.push({ type: 'info', text: `  Step-by-step Portfolio:` })
+          bt.snapshots.forEach(s => {
+            const valColor = s.value >= bt.initial_balance ? 'success' : 'error'
+            const actionStr = s.action === 'BUY' ? 'BUY ' : s.action === 'SELL' ? 'SELL' : 'HOLD'
+            output.push({ type: valColor, text: `    ${s.date}  ${actionStr}  $${s.price.toFixed(2)}  Portfolio: $${s.value.toLocaleString()}  (${s.return_pct >= 0 ? '+' : ''}${s.return_pct}%)` })
+          })
+          output.push({ type: 'info', text: '' })
+        }
+
+        if (bt.trades && bt.trades.length > 0) {
+          output.push({ type: 'info', text: `  Closed Trades:` })
+          bt.trades.forEach((t, i) => {
+            const pnlType = t.pnl >= 0 ? 'success' : 'error'
+            const status = t.status === 'open' ? ' [OPEN]' : ''
+            output.push({ type: 'info', text: `    ${i + 1}. Buy $${t.buy_price} → Sell $${t.sell_price} | ${t.shares.toFixed(2)} shares` })
+            output.push({ type: pnlType, text: `       P&L: ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toLocaleString()} (${t.pnl_pct >= 0 ? '+' : ''}${t.pnl_pct}%)${status}` })
+          })
+          output.push({ type: 'info', text: '' })
+        }
+      }
+
+      output.push({ type: 'success', text: 'Policy evaluation complete.' })
+
+      setResults(output)
       setTerminal(prev => [
         ...prev,
         { type: 'success', text: `  Evaluated ${selectedStock} over ${period}` },
-        { type: 'success', text: `  Score: ${result[result.length - 2]?.text?.trim() || 'done'}` },
+        { type: 'success', text: `  Score: ${score > 0 ? '+' : ''}${score}` },
         { type: 'system', text: '$ Done.' },
       ])
+    } catch (err) {
+      setResults([{ type: 'error', text: `> Request failed: ${err.message}` }])
+      setTerminal(prev => [...prev, { type: 'error', text: `$ Error: ${err.message}` }])
+    } finally {
       setIsRunning(false)
-    }, 600)
-  }, [code, selectedStock, period])
+    }
+  }, [code, selectedStock, period, interval, activeStock, chartData, news])
 
   const handleUpload = useCallback((e) => {
     const file = e.target.files[0]
@@ -249,6 +315,30 @@ function App() {
     reader.readAsText(file)
     e.target.value = ''
   }, [])
+
+  if (loading) {
+    return (
+      <div className="app">
+        <div className="loading-screen">
+          <div className="loading-spinner"></div>
+          <div className="loading-text">Loading market data & Python engine...</div>
+          {!pyodideReady && <div className="loading-subtext">This may take a moment on first load</div>}
+        </div>
+      </div>
+    )
+  }
+
+  if (error && stocks.length === 0) {
+    return (
+      <div className="app">
+        <div className="error-screen">
+          <h2>Connection Error</h2>
+          <p>{error}</p>
+          <button onClick={() => window.location.reload()}>Retry</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -276,6 +366,17 @@ function App() {
                     onClick={() => setPeriod(p)}
                   >
                     {p}
+                  </button>
+                ))}
+              </div>
+              <div className="interval-selector">
+                {INTERVAL_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    className={`period-btn ${interval === opt.value ? 'active' : ''}`}
+                    onClick={() => setInterval_(opt.value)}
+                  >
+                    {opt.label}
                   </button>
                 ))}
               </div>
@@ -315,7 +416,7 @@ function App() {
         <div className="data-area">
           <div className="panel stocks-panel">
             <div className="stock-tabs">
-              {STOCK_DATA.map(stock => (
+              {stocks.map(stock => (
                 <div
                   key={stock.symbol}
                   className={`stock-tab ${selectedStock === stock.symbol ? 'active' : ''}`}
@@ -325,23 +426,27 @@ function App() {
                 </div>
               ))}
             </div>
-            <StockChart stock={activeStock} period={period} />
+            <StockChart stock={activeStock} period={period} chartData={chartData} />
           </div>
           <div className="panel news-panel">
             <div className="panel-header">News</div>
             <div className="news-list">
-              {news.map((article, i) => {
-                const lower = article.title.toLowerCase()
-                const isRelevant = lower.includes(selectedStock.toLowerCase()) || lower.includes(activeStock.name.toLowerCase().split(' ')[0].toLowerCase())
-                return (
-                  <div key={i} className={`news-item ${isRelevant ? 'relevant' : ''}`}>
-                    <div className="news-headline">{article.title}</div>
-                    <div className="news-meta">
-                      <span className="news-source">{article.source}</span> · {article.time}
+              {news.length === 0 ? (
+                <div className="news-empty">No news available</div>
+              ) : (
+                news.map((article, i) => {
+                  const lower = article.title?.toLowerCase() || ''
+                  const isRelevant = lower.includes(selectedStock?.toLowerCase() || '') || lower.includes(activeStock?.name?.toLowerCase().split(' ')[0] || '')
+                  return (
+                    <div key={i} className={`news-item ${isRelevant ? 'relevant' : ''}`}>
+                      <div className="news-headline">{article.title}</div>
+                      <div className="news-meta">
+                        <span className="news-source">{article.source}</span> · {article.time}
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })
+              )}
             </div>
           </div>
         </div>
