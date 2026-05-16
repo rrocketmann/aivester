@@ -30,6 +30,7 @@ export async function runPythonPolicy(code, stockData, newsData, chartData) {
 
   const wrapperCode = `
 import json
+from pyodide.ffi import to_py
 
 class Stock:
     def __init__(self, data):
