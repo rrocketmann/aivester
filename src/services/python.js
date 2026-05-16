@@ -25,23 +25,11 @@ export async function loadPyodideEngine() {
   return loadingPromise
 }
 
-function escapeForPython(obj) {
-  return JSON.stringify(obj).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"')
-}
-
 export async function runPythonPolicy(code, stockData, newsData, chartData) {
   const pyodide = await loadPyodideEngine()
 
-  const stockJson = escapeForPython(stockData)
-  const newsJson = escapeForPython(newsData)
-  const chartJson = escapeForPython(chartData)
-
   const wrapperCode = `
 import json
-
-stock_data = json.loads('${stockJson}')
-news_data = json.loads('${newsJson}')
-chart_data = json.loads('${chartJson}')
 
 class Stock:
     def __init__(self, data):
@@ -72,6 +60,10 @@ else:
 `
 
   try {
+    pyodide.globals.set('stock_data', stockData)
+    pyodide.globals.set('news_data', newsData)
+    pyodide.globals.set('chart_data', chartData)
+
     const output = await pyodide.runPythonAsync(wrapperCode)
     const result = JSON.parse(output)
     return {
@@ -91,13 +83,8 @@ else:
 export async function runPythonBacktest(code, chartData, initialBalance = 10000) {
   const pyodide = await loadPyodideEngine()
 
-  const chartJson = escapeForPython(chartData)
-
   const wrapperCode = `
 import json
-
-chart_data = json.loads('${chartJson}')
-initial_balance = ${initialBalance}
 
 class ChartPoint:
     def __init__(self, data):
@@ -205,6 +192,9 @@ json.dumps({
 `
 
   try {
+    pyodide.globals.set('chart_data', chartData)
+    pyodide.globals.set('initial_balance', initialBalance)
+
     const output = await pyodide.runPythonAsync(wrapperCode)
     const result = JSON.parse(output)
     return {
