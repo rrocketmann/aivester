@@ -30,7 +30,7 @@ function pyToJs(obj) {
   if (typeof obj !== 'object') return obj
   if (Array.isArray(obj)) return obj.map(pyToJs)
   if (obj.toJs) {
-    try { return pyToJs(obj.toJs({ create_pyproxies: false })) } catch { /* fallthrough */ }
+    try { return pyToJs(obj.toJs({ create_pyproxies: false })) } catch {}
   }
   const result = {}
   for (const key of Object.keys(obj)) {
@@ -114,10 +114,6 @@ class ChartPoint:
 
 chart = [ChartPoint(dict(c)) for c in chart_data]
 
-# Determine step size based on interval and chart length
-# hourly: every point for intraday, every bar for daily data
-# daily: skip to roughly 22 decisions (trading days in a month)
-# weekly: skip to roughly 4-5 decisions per month
 n = len(chart)
 if eval_interval == "hourly":
     effective_step = 1

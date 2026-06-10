@@ -2,14 +2,11 @@ const POLICY_TEMPLATES = [
   {
     name: 'Momentum Scanner',
     description: 'Buy on uptrends, sell on downtrends',
-    code: `# Momentum Scanner
-# Tune the thresholds below, then click TRAIN to optimize them
-
-UP_THRESHOLD = 2      # % change for strong uptrend
-DOWN_THRESHOLD = -2   # % change for strong downtrend
-VOLUME_MULT = 1.5     # volume spike multiplier
-UP_SCORE = 1          # score per bullish signal
-DOWN_SCORE = 1         # score per bearish signal
+    code: `UP_THRESHOLD = 2
+DOWN_THRESHOLD = -2
+VOLUME_MULT = 1.5
+UP_SCORE = 1
+DOWN_SCORE = 1
 
 def evaluate(stock, news):
     signals = []
@@ -54,24 +51,19 @@ def evaluate(stock, news):
   {
     name: 'Mean Reversion',
     description: 'Buy oversold, sell overbought based on price deviation',
-    code: `# Mean Reversion
-# Tune the thresholds below, then click TRAIN to optimize
-
-OVERSOLD_THRESHOLD = -3    # % drop to consider oversold (buy)
-OVERBOUGHT_THRESHOLD = 3   # % rise to consider overbought (sell)
-VOLUME_CONFIRM_MULT = 1.5  # volume ratio to confirm signal
-DIP_BUY_SCORE = 1          # score for buying dips
-SPIKE_SELL_SCORE = 1        # score for selling spikes
+    code: `OVERSOLD_THRESHOLD = -3
+OVERBOUGHT_THRESHOLD = 3
+VOLUME_CONFIRM_MULT = 1.5
+DIP_BUY_SCORE = 1
+SPIKE_SELL_SCORE = 1
 
 def evaluate(stock, news):
-    # How far from average (approximation using available data)
     if not hasattr(stock, 'change_pct') or stock.change_pct is None:
         return {"symbol": getattr(stock, 'symbol', '?'), "signals": [], "score": 0}
 
     signals = []
     score = 0
 
-    # Oversold = buying opportunity
     if stock.change_pct < -3:
         signals.append("OVERSOLD")
         score += 2
@@ -79,7 +71,6 @@ def evaluate(stock, news):
         signals.append("DIP")
         score += 1
 
-    # Overbought = selling opportunity
     if stock.change_pct > 3:
         signals.append("OVERBOUGHT")
         score -= 2
@@ -87,11 +78,9 @@ def evaluate(stock, news):
         signals.append("SPIKE")
         score -= 1
 
-    # Volume confirms reversal
     if stock.volume and hasattr(stock, 'avg_volume') and stock.avg_volume:
         if stock.volume > stock.avg_volume * 1.5:
             signals.append("HIGH_VOLUME")
-            # Amplify the signal
             if score > 0:
                 score += 1
             elif score < 0:
@@ -107,15 +96,12 @@ def evaluate(stock, news):
   {
     name: 'Value Investor',
     description: 'Long-term value play based on fundamentals',
-    code: `# Value Investor
-# Focus on value metrics and longer-term trends
-
+    code: `
 def evaluate(stock, news):
     signals = []
     score = 0
     symbol = getattr(stock, 'symbol', '?')
 
-    # Strong daily moves create opportunities
     if stock.change_pct < -2:
         signals.append("DIP_BUY")
         score += 1
@@ -123,7 +109,6 @@ def evaluate(stock, news):
         signals.append("OVEREXTENDED")
         score -= 1
 
-    # Volume analysis
     if hasattr(stock, 'volume') and hasattr(stock, 'avg_volume') and stock.avg_volume:
         vol_ratio = stock.volume / stock.avg_volume if stock.avg_volume > 0 else 1
         if vol_ratio > 2:
@@ -133,7 +118,6 @@ def evaluate(stock, news):
             signals.append("LOW_VOLUME")
             score -= 0.5
 
-    # News analysis with weighted sentiment
     bullish = ["buy", "growth", "record", "beat", "upgrade", "raise"]
     bearish = ["sell", "decline", "miss", "cut", "downgrade", "risk"]
 
@@ -160,18 +144,14 @@ def evaluate(stock, news):
   {
     name: 'Breakout Detector',
     description: 'Detect breakouts on high volume with confirmation',
-    code: `# Breakout Detector
-# Enter on confirmed breakouts, exit on weak momentum
-
+    code: `
 def evaluate(stock, news):
     signals = []
     score = 0
     symbol = getattr(stock, 'symbol', '?')
 
-    # Price breakout detection
     change = stock.change_pct if stock.change_pct else 0
 
-    # Strong move up
     if change > 2.5:
         signals.append("BREAKOUT_UP")
         score += 2
@@ -179,7 +159,6 @@ def evaluate(stock, news):
         signals.append("MOMENTUM_UP")
         score += 1
 
-    # Strong move down
     if change < -2.5:
         signals.append("BREAKDOWN")
         score -= 2
@@ -187,7 +166,6 @@ def evaluate(stock, news):
         signals.append("MOMENTUM_DOWN")
         score -= 1
 
-    # Volume confirmation (breakout needs volume)
     if hasattr(stock, 'volume') and hasattr(stock, 'avg_volume') and stock.avg_volume and stock.avg_volume > 0:
         vol_ratio = stock.volume / stock.avg_volume
         if vol_ratio > 2 and abs(change) > 1:
@@ -197,7 +175,6 @@ def evaluate(stock, news):
             else:
                 score -= 1
 
-    # News catalyst
     catalysts = ["fda", "earnings", "acquisition", "merger", "contract", "partnership"]
     for article in news:
         lower = article.title.lower()

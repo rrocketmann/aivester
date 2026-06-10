@@ -14,7 +14,6 @@ import json
 import sys
 import os
 
-# Inject stock data and news as Python objects
 stock_data = json.loads(os.environ.get('STOCK_DATA', '{}'))
 news_data = json.loads(os.environ.get('NEWS_DATA', '[]'))
 chart_data = json.loads(os.environ.get('CHART_DATA', '[]'))
@@ -44,10 +43,8 @@ stock = Stock(stock_data) if stock_data else None
 news = [NewsArticle(n) for n in news_data]
 chart = [ChartPoint(c) for c in chart_data]
 
-# User code will be inserted here
 USER_CODE_PLACEHOLDER
 
-# Execute the evaluate function if it exists
 if 'evaluate' in dir():
     try:
         result = evaluate(stock, news)

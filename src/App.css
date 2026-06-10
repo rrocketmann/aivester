@@ -13,6 +13,7 @@
   --red: #ef4444;
   --red-hover: #dc2626;
   --red-bg: #fef2f2;
+  --radius: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -38,6 +39,7 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+  border-radius: var(--radius);
 }
 
 html, body, #root {
